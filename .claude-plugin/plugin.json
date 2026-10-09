@@ -1,0 +1,36 @@
+{
+  "name": "modder",
+  "version": "0.1.0",
+  "description": "One orchestrator over every Claude Code session you have open, with Jev (TypeSafe System One) deciding which one needs you",
+  "author": {
+    "name": "Christian Dixon"
+  },
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "jevMode": {
+      "type": "string",
+      "title": "Jev mode",
+      "description": "off: no Jev calls. shadow (default): Jev's answers are logged and shown, nothing is enforced. enforce: the permission gate acts on Jev's verdicts.",
+      "default": "shadow"
+    },
+    "keyFile": {
+      "type": "string",
+      "title": "OpenRouter key file",
+      "description": "A file that holds your OpenRouter API key, read at runtime and never shown. Leave empty to use the OPENROUTER_API_KEY environment variable.",
+      "default": ""
+    },
+    "protect": {
+      "type": "string",
+      "title": "Protected paths",
+      "description": "Comma-separated path fragments that no tool call may touch, in any mode. Calls that touch them are denied in code and never sent to Jev.",
+      "default": "/.ssh/,/.aws/credentials,/.gnupg/"
+    },
+    "denyPushFrom": {
+      "type": "string",
+      "title": "Never push from",
+      "description": "Comma-separated directories where git push is always denied (for example a stale clone).",
+      "default": ""
+    }
+  }
+}

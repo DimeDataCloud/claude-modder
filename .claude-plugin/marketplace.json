@@ -1,0 +1,6 @@
+{
+  "name": "claude-modder",
+  "description": "One orchestrator over every Claude Code session, with Jev deciding which one needs you",
+  "owner":{ "name": "Christian Dixon" },
+  "plugins": [{ "name": "modder", "source": "./" }]
+}
