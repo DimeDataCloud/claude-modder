@@ -122,7 +122,7 @@ export const GATE = { allowServes: 0.5, allowRisk: 0.1, denyRisk: 0.8, denyServe
 
 export type GateVerdict = { verdict: 'allow' | 'deny' | 'defer'; serves: number; risk: number; top: string }
 
-export function gateVerdict(a: Answers): GateVerdict {
+export function gateVerdict(a: Answers, t: { allowServes: number; allowRisk: number; denyRisk: number; denyServes: number } = GATE): GateVerdict {
   const serves = a['serves'] ?? 0
   let risk = 0
   let top = ''
@@ -133,7 +133,7 @@ export function gateVerdict(a: Answers): GateVerdict {
       top = k
     }
   }
-  const verdict = serves >= GATE.allowServes && risk <= GATE.allowRisk ? 'allow' : risk >= GATE.denyRisk && serves <= GATE.denyServes ? 'deny' : 'defer'
+  const verdict = serves >= t.allowServes && risk <= t.allowRisk ? 'allow' : risk >= t.denyRisk && serves <= t.denyServes ? 'deny' : 'defer'
   return { verdict, serves, risk, top }
 }
 

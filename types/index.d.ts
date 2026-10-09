@@ -70,6 +70,10 @@ export type GateEntry = {
   top: string
   ms: number
   cost: number
+  /** The call's tool_use_id, so its outcome can be matched to it. */
+  id?: string
+  /** For a call put to the person: what they chose, once the call resolved. */
+  human?: 'yes' | 'no'
 }
 
 export type JevInfo = {
@@ -84,6 +88,78 @@ export type JevInfo = {
   model?: string
 }
 
+// ── The skin ─────────────────────────────────────────────────────────────
+
+/** A part of the workspace a skin paints. */
+export type SkinTarget = 'user' | 'assistant' | 'tools' | 'spinner' | 'notices' | 'commands' | 'questions' | 'band' | 'panes'
+
+/** How one part is drawn: colours are #rrggbb or a theme key. */
+export type SkinStyle = {
+  border?: string
+  borderStyle?: 'single' | 'double' | 'round' | 'bold' | 'singleDouble' | 'doubleSingle' | 'classic' | 'arrow'
+  borderDim?: boolean
+  bg?: string
+  /** A short overlay drawn on the part's first row: an emoji, a word. */
+  badge?: string
+  badgeColor?: string
+  padX?: number
+  /** Spinner and notices only. */
+  hidden?: boolean
+}
+
+export type SkinOp =
+  | { kind: 'set'; targets: SkinTarget[]; style: SkinStyle }
+  | { kind: 'clear'; targets: SkinTarget[]; keys: (keyof SkinStyle)[] }
+  | { kind: 'tune'; targets: SkinTarget[]; warm?: number; light?: number; sat?: number }
+  | { kind: 'token'; key: string; value: string }
+  | { kind: 'preset'; name: string }
+  | { kind: 'theme'; value: string }
+  | { kind: 'save'; name: string }
+  | { kind: 'load'; name: string }
+  | { kind: 'undo' }
+  | { kind: 'reset' }
+
+export type Skin = {
+  parts: Partial<Record<SkinTarget, SkinStyle>>
+  /** Engine colour tokens, written to ~/.claude/themes/modder.json. */
+  tokens?: Record<string, string>
+  name?: string
+  rev: number
+}
+
+// ── What the mod learns ──────────────────────────────────────────────────
+
+/** Gate thresholds: the shipped ones, or what the outcomes taught. */
+export type Thresholds = { allowServes: number; allowRisk: number; denyRisk: number; denyServes: number }
+
+export type Calibration = {
+  /** Calls with a known outcome the thresholds were fitted to. */
+  n: number
+  ran: number
+  blocked: number
+  base: Thresholds
+  learned: Thresholds
+  /** On the labelled calls: how many each would settle, and how many it would get wrong. */
+  before: { allows: number; denies: number; wrong: number }
+  after: { allows: number; denies: number; wrong: number }
+  /** Too few outcomes yet: the shipped thresholds stand. */
+  ready: boolean
+  at: number
+}
+
+/** What the Mind view draws. */
+export type Mind = {
+  calibration?: Calibration
+  /** Rolling share of the gate's verdicts that matched the outcome, oldest first. */
+  curve: number[]
+  /** Phrases the skin learned from Claude, so they parse for free next time. */
+  phrases: number
+  /** Skin requests: read by code, by memory, by Claude, not understood. */
+  skinBy: { code: number; memory: number; claude: number; none: number }
+  /** The last few things the skin did, newest last. */
+  said: string[]
+}
+
 declare module 'claude-code' {
   interface PluginState {
     modder: {
@@ -95,6 +171,10 @@ declare module 'claude-code' {
       gate: GateEntry[]
       /** The band above the prompt was dismissed for this attention key. */
       hush: string
+      skin: Skin
+      /** Which tab of the pane: sessions, skin or mind. */
+      view: string
+      mind: Mind
     }
   }
 }

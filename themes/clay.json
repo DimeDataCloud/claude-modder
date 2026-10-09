@@ -1,0 +1,16 @@
+{
+  "name": "Clay (modder)",
+  "base": "dark",
+  "overrides": {
+    "claude": "#d97757",
+    "promptBorder": "#b8664a",
+    "suggestion": "#e8a68a",
+    "permission": "#c6a0f6",
+    "planMode": "#7fb4a8",
+    "autoAccept": "#e0b062",
+    "bashBorder": "#d9779a",
+    "success": "#8fbf7f",
+    "error": "#e5735f",
+    "warning": "#e0b062"
+  }
+}

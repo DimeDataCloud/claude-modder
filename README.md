@@ -1,8 +1,94 @@
+<p align="center"><img src="docs/banner.svg" alt="claude-modder: one mind over every Claude Code session" width="100%"></p>
+
 # claude-modder
 
-One orchestrator over every Claude Code session you have open. Each session reports what it is doing, one of them asks [Jev](https://docs.typesafe.ai) (TypeSafe System One) which of the others needs you, and every session shows you the answer: a pane listing every session, a one-line band above the prompt naming the session that needs you most, and a count in the footer.
+A Claude Code mod that turns every session you have open into one mind. It **watches** them all and tells you which one needs you. It **learns** from how each call it judged actually ended. And it **wears** whatever you tell it to: say *"make tool calls teal and give them a ⚡ badge"* and the workspace changes as you watch.
+
+Plain function hooks, with no daemon, server or build step. It runs in the terminal and in the desktop app's Code tab.
 
 ```
+/plugin install modder --marketplace DimeDataCloud/claude-modder
+```
+
+| | What it does | Try |
+|---|---|---|
+| **✻ Skin** | Natural-language workspace editing. Colours, borders, fills and overlay badges on every part Claude Code draws, plus the engine's own colour tokens. | `/skin sunset` · `/skin warmer` · `/skin overlay 🔒 on tool calls` |
+| **✻ Mind** | A permission gate that refits its own thresholds to your approve/deny clicks, under the rule that it may never get a known outcome wrong. | `/modder mind` |
+| **✻ Fleet** | One orchestrator over every open session. It ranks who needs you and drops a nudge into the right prompt box. | `/modder` |
+| **✻ Hands** | Claude gets two tools of its own: `skin` changes how its workspace looks, and `mind` tells it what its other sessions are doing. | *"Claude, make this look like a rainy Tokyo night"* |
+
+---
+
+## ✻ Skin: say what you want it to look like
+
+```
+/skin make tool calls teal and give them a ⚡ badge
+/skin double rounded purple borders on claude's replies
+/skin background of my messages dark navy
+/skin make the prompt box claude orange
+/skin warmer
+/skin cyberpunk
+/skin hide the spinner
+/skin undo
+/skin save this as focus      →  /skin wear focus
+/skin light mode · /skin colorblind
+```
+
+**How a sentence becomes a look:**
+
+1. **Code reads it first.** A parser in [`hooks/skin.ts`](hooks/skin.ts) splits the sentence into clauses and reads each one:
+   - the parts named: your messages, Claude's replies, tool calls, spinner, notices, command output, questions, the attention band, panes;
+   - colours: 44 names, `#hex`, and *dark / light / pale / bright / muted* shades;
+   - border styles, overlay badges and relative moods (*warmer*, *calmer*, *bolder*);
+   - ten named looks, `undo`, and `save` / `wear`.
+
+   A clause that names no part carries the part named before it, so *"make tool calls teal and give them a badge"* means what it says. Most requests never leave your machine.
+2. **Claude reads the rest.** A phrase the parser cannot read (*"make it feel like a rainy Tokyo night"*) goes to Claude once. Its JSON answer is held to a strict schema by `validOps`: unknown parts, bad colours, script-looking strings, and "hide the questions" are all dropped.
+3. **It remembers.** What Claude made of the phrase is stored, so the next time you say it the answer comes from memory: free, instant, and identical.
+
+**Two layers, so it reaches everything:**
+
+| Layer | What it paints | Where |
+|---|---|---|
+| Render wrappers (`ui.render` on 11 components) | A frame, fill, padding or overlay badge around messages, tool rows, the spinner, notices, questions, the band and panes. The engine's own row is kept intact inside. | Terminal **and** the desktop Code tab |
+| Engine colour tokens (`~/.claude/themes/modder.json`) | The prompt box, the accent, diffs, errors, suggestions, permission and plan-mode colours, which no wrapper can reach | Terminal. Claude Code reloads the file live. Choose **Modder** once in `/theme`. |
+
+The **Skin** tab (`/skin` with no words) draws every part as a live swatch, shows the engine colours as you set them, and has a button for each look plus Undo and Plain.
+
+**Safety:**
+- Only the spinner and notices can be hidden. A question or a message is never hidden, because that would hide what needs you.
+- The theme setting itself is changed only through `/config`'s own rules. When Claude Code reserves it for its dialog, the mod says so and leaves your settings alone.
+
+## ✻ Mind: a gate that learns from you, and can't learn to be careless
+
+Every tool call that does more than read is put to [Jev](https://docs.typesafe.ai) as eight yes/no questions: does it serve the request, and is it one of seven risks (destroys, leaks, secrets, outward, scope, system, steered).
+
+The shipped policy:
+- **allow** when it serves ≥ 0.5 and every risk ≤ 0.10;
+- **deny** when some risk ≥ 0.8 and it serves ≤ 0.3;
+- otherwise **defer** to your normal prompt.
+
+Then it learns:
+
+1. **Every judged call gets an outcome.** It ran or was blocked, either by your rules or by your own click on the permission prompt. The mod matches the click to the call by `tool_use_id`.
+2. **Outcomes from the whole fleet refit the thresholds** ([`hooks/learn.ts`](hooks/learn.ts)). Among the cut-offs that get **no labelled call wrong**, it picks the one that settles the most calls; ties go to the stricter one.
+3. **Hard limits on what it can learn:**
+   - nothing changes before 20 outcomes;
+   - a fit is never laxer than a fixed floor (allow-risk ≤ 0.30, deny-risk ≥ 0.50);
+   - a fit that would be wrong more often than the shipped thresholds is discarded.
+4. **Enforcement stays off by default.** In `shadow` mode the learned thresholds are only shown. In `enforce` mode they settle only calls your permission mode would otherwise put to you, never your settings' own allow or deny.
+
+The **Mind** tab shows:
+- the fleet as a constellation;
+- `12/20 outcomes before it may retune itself`, or the fitted result;
+- the shipped and learned thresholds side by side, with how many calls each would settle and get wrong on the evidence;
+- a sparkline of agreement with outcomes over time;
+- how the skin understood you: by code, from memory, or by Claude.
+
+## ✻ Fleet: who needs you
+
+```
+✻ modder  Sessions  Skin  Mind
 3 sessions · 1 working · 2 need you                      l: Lead from here   r: Refresh
 
  1 ?  Ship the billing page                                          4m  Nudge
@@ -10,114 +96,87 @@ One orchestrator over every Claude Code session you have open. Each session repo
       shop@billing · 4 turns · 31 tools · ctx 41%
  2 ✓  Refactor auth                                                 12m  Nudge
       done, ready for review
-      api · 2 turns · 12 tools
       Jev: done 86%
  · ›  Fix the flaky login test (this session)                       38s
-      $ npm test -- login
-      web@main · 1 turn · 9 tools
-
-Jev shadow (jev-1.13.0) · 42 calls from here · p50 196ms · $0.0016 · this session leads
 ```
 
-A Claude Code mod: plain function hooks, no daemon and no server. It runs in the terminal and in the desktop app's Code tab.
+Each session writes a card to `~/.claude-modder/sessions/`. One of them, the elected lead, asks Jev about the others and ranks them:
+1. asking you something;
+2. errored;
+3. waiting on you;
+4. stuck or drifting off its task;
+5. done and ready for review.
 
-## Install
+You see the result in:
+- the `/modder` pane;
+- a band above the prompt naming the session that most needs you;
+- a footer count;
+- a toast.
+
+**Nudge** puts a note into the other session's prompt box. A person presses Enter; nothing is ever submitted for you.
+
+## ✻ Hands: Claude can see and change its own workspace
+
+The mod registers two tools the model can call:
+
+- **`mcp__modder__skin`** takes `{ request }` in plain words, or `{ ops }` for precise changes, held to the same schema. Ask Claude *"make this easier on the eyes"* and it restyles its own workspace, then tells you what changed.
+- **`mcp__modder__mind`** returns every open session with what it is doing and whether it needs you, what the gate has learned, and the current skin. Ask *"what are my other sessions doing?"*
+
+## Verified
+
+Every claim above is tested. `claude plugin test .` runs **40 tests**:
+
+| What | How it's proven |
+|---|---|
+| The parser | Parts, colours, shades, badges, carried clauses, looks and aliases, tokens, themes, undo/save/wear |
+| Safety of the skin | Hiding questions or messages is refused by the parser, by `apply`, and by the validator |
+| Claude's answers | `validOps` drops unknown parts, unsafe values, prototype keys and out-of-range numbers, and caps 50 ops at 12 |
+| Learning | Approvals widen allow only as far as the evidence goes; refusals teach deny; a fit can't be forced past a contradiction |
+| A safety **property** | Across 400 random noisy histories, a fit is never wrong more often than the shipped gate, nor laxer than the floor |
+| Memory | A phrase only Claude reads costs one model call; the same phrase again costs zero |
+| Rendering | Skinned parts draw inside their frame with the engine's row kept; untouched parts stay untouched, on terminal and desktop |
+| Mutation testing | Seven deliberate bugs in the safety-critical lines; every one turns the suite red |
+
+**Live, 2026-10-09**, in a real `claude -p` with the mod loaded:
+- Claude called its own `skin` tool to wear *sunset* with a ✻ badge on its replies.
+- `/skin make it feel like a rainy tokyo night` went to Claude once and came back as a validated neon-on-navy look.
+- Saying it again was answered from memory: the store read `claude: 1, memory: 1`.
+- Jev: 180–340 ms and about $0.00003–0.00004 per call (2026-10-08).
+
+## Install and set up
 
 ```
 /plugin install modder --marketplace DimeDataCloud/claude-modder
 ```
 
-Answer `y` to add the marketplace, pick the user scope, and set the options. Then open the fleet from any session:
-
-```
-/modder
-```
-
-## Jev key
-
-Jev answers through OpenRouter (`typesafe/jev-1.13`, pinned). Provide an OpenRouter key in either of two ways:
-
-- set `OPENROUTER_API_KEY` in your environment, or
-- set the **OpenRouter key file** option to a file that holds the key.
-
-The key is read at runtime and is never written, logged or shown. Without a key everything works except Jev's reads: sessions still report their state, and asking or erroring sessions still rise to the top.
-
-## What it does
-
-| Where | What you see |
-|---|---|
-| `/modder` pane | Every session, most urgent first: what it is doing, how long for, its repo and branch, Jev's read, a **Nudge** button |
-| Above the prompt | The one *other* session that most needs you, with Nudge, Sessions and Dismiss |
-| Footer | `fleet 3 · 1 needs you` (only when more than one session is open) |
-| Toast | The first time another session comes to need you |
-
-**Who needs you, in order:**
-1. A session asking a question or waiting on a permission prompt.
-2. A session whose turn ended on an error.
-3. An idle session Jev reads as waiting on you (≥ 0.80).
-4. A session Jev reads as stuck (≥ 0.80) or drifting off its task (≥ 0.80).
-5. An idle session Jev reads as done and ready for review (≥ 0.75).
-
-**Nudge** drops a short note, written by the mod (never by Jev), into the other session's prompt box. A person presses Enter to send it, or Esc to clear it. Nothing is ever submitted on your behalf.
-
-## How it works
-
-```
-every session (worker)                      the lead (one of them)
-  hooks: turn.start, tool.call,               every 3s: reads all cards
-  tool.check, turn.complete                   asks Jev about each session that changed
-  writes ~/.claude-modder/sessions/<id>.json  writes ~/.claude-modder/health.json
-  reads  ~/.claude-modder/inbox/<id>.json     (one Jev request per session per change,
-                                               every question batched in it)
-```
-
-- **Lead election:** the first session claims `lead.json`, and a lead that stops writing for 15s is replaced. `/modder lead` (or `l` in the pane) takes the lead.
-- **Every decision is code.** Jev only answers yes/no questions with a probability. The thresholds in [`hooks/policy.ts`](hooks/policy.ts) turn those into verdicts, and every one is unit-tested with stubbed answers.
-- **One queue per process:** the permission gate goes first, then the orchestrator's reads. Stale jobs are dropped rather than run late.
-- **Pinned model:** the thresholds are tuned against `jev-1.13`.
-
-## The permission gate
-
-In every session, each tool call that does more than read is put to Jev as eight yes/no questions in one request. One asks whether the call serves the request; the other seven are risks: destroys, leaks, secrets, outward, scope, system, steered.
-
-- **allow:** serves ≥ 0.5 and every risk ≤ 0.10
-- **deny:** some risk ≥ 0.8 and serves ≤ 0.3
-- **defer:** anything else; the session's own permission flow decides
-
-It starts in **shadow** mode: Jev's verdict is logged beside what the session actually did, and the pane shows the agreement. Switch `jevMode` to `enforce` once the log has earned it. Enforce applies only to calls your permission mode would otherwise put to you. It uses a 1.5s budget and falls back to your normal prompt when that runs out.
-
-**Hard rules** run in code before Jev, in every mode, and the calls they catch are never sent to Jev:
-- `protect`: path fragments that no tool may touch. The default is `/.ssh/,/.aws/credentials,/.gnupg/`.
-- `denyPushFrom`: folders from which `git push` is always refused, for example a stale clone.
-
-## Data
-
-No redaction. Jev sees, per request:
-
-- **Session reads:** the session's task, its latest ask, its status, and its recent transcript. The transcript is sent whole, trimmed only to fit Jev's 32k-token window.
-- **Gate checks:** the last three messages, the pending call and the project directory. Never tool output.
-
-OpenRouter states it does not store or train on API traffic. TypeSafe states it does not train on customer data. Read both policies and decide for yourself. Calls caught by a hard rule never leave your machine.
-
-Measured on 2026-10-08: 180–340 ms per call, about 640–950 input tokens, about $0.00003–0.00004 per call.
-
-## Options
+Jev answers through OpenRouter (`typesafe/jev-1.13`, pinned). Set `OPENROUTER_API_KEY`, or point the **OpenRouter key file** option at a file holding the key. The key is read at runtime and never written, logged or shown. Without a key, everything but Jev's reads still works, the skin included.
 
 | Option | Default | |
 |---|---|---|
 | `jevMode` | `shadow` | `off` · `shadow` · `enforce` |
-| `keyFile` | (empty) | A file that holds the OpenRouter key. Empty means `OPENROUTER_API_KEY` is used |
-| `protect` | `/.ssh/,/.aws/credentials,/.gnupg/` | Comma-separated path fragments no tool may touch |
-| `denyPushFrom` | (empty) | Comma-separated folders `git push` is refused from |
+| `keyFile` | (empty) | A file that holds the OpenRouter key |
+| `protect` | `/.ssh/,/.aws/credentials,/.gnupg/` | Path fragments no tool may touch, in code, in every mode |
+| `denyPushFrom` | (empty) | Folders `git push` is always refused from |
+
+The plugin also ships two themes, **Clay** and **Clay Light**, in [`themes/`](themes), in Claude's own colours.
 
 ## Commands
 
 | | |
 |---|---|
-| `/modder` | Open the fleet pane |
-| `/modder lead` | Make this session the lead |
-| `/modder nudge <n>` | Nudge session *n* as numbered in the pane |
+| `/modder` · `/modder skin` · `/modder mind` | Open the pane on a tab (keys `1` `2` `3`) |
+| `/skin <words>` | Restyle the workspace |
+| `/skin` | Open the Skin tab |
+| `/modder lead` | Make this session the one that asks Jev |
+| `/modder nudge <n>` | Nudge session *n* |
 | `/modder close` | Close the pane |
+
+## Data
+
+- **Jev** sees a session's task, its latest ask, its status and its recent transcript, trimmed only to fit a 32k window. For gate checks it sees the last three messages and the pending call; never tool output.
+- **Calls caught by a hard rule never leave your machine.**
+- **Skin phrases the parser can't read** go to Claude through your own session's client (`$.model.complete`, Haiku), fenced as data.
+- **Everything learned stays local:** `~/.claude-modder/` and the plugin's store.
 
 ## Develop
 
@@ -127,12 +186,23 @@ claude plugin test .
 claude --plugin-dir .
 ```
 
-`tsc -p .` type-checks once the mod has loaded, which writes `.claude-plugin/types/`. Troubleshooting state per session is in `~/.claude-modder/diag/<session>.json`. It never holds the key.
+| File | |
+|---|---|
+| [`hooks/register.tsx`](hooks/register.tsx) | Hooks, surfaces, commands, Claude's tools |
+| [`hooks/skin.ts`](hooks/skin.ts) | Words → ops → looks; colour math; the schema |
+| [`hooks/learn.ts`](hooks/learn.ts) | Outcomes, calibration, the learning curve |
+| [`hooks/policy.ts`](hooks/policy.ts) | Hard rules, gate and attention policy |
+| [`hooks/fleet.ts`](hooks/fleet.ts) · [`hooks/jev.ts`](hooks/jev.ts) | Session cards; the Jev client and queue |
 
 ## Prior art
 
-The gate policy follows [madisonrickert/jev-permission-gate](https://github.com/madisonrickert/jev-permission-gate). The observe → batched questions → deterministic policy loop follows [thruwire/foreman](https://github.com/thruwire/foreman). The rule that low confidence never changes anything comes from [gargpratyush/jev-router](https://github.com/gargpratyush/jev-router). The question wording and code here are this project's own.
+- The gate policy follows [madisonrickert/jev-permission-gate](https://github.com/madisonrickert/jev-permission-gate).
+- The observe → batched questions → deterministic policy loop follows [thruwire/foreman](https://github.com/thruwire/foreman).
+- The rule that low confidence never changes anything comes from [gargpratyush/jev-router](https://github.com/gargpratyush/jev-router).
+- Custom theme files are Claude Code's own feature.
+
+The natural-language skin, the outcome-calibrated gate, and the code here are this project's own.
 
 ## License
 
-MIT
+MIT © 2026 Christian Dixon

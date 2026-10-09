@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" role="img" aria-label="claude-modder: one mind over every Claude Code session. It watches, learns, and wears what you tell it.">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1f1a17"/>
+      <stop offset="1" stop-color="#2a201b"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.18" cy="0.42" r="0.5">
+      <stop offset="0" stop-color="#d97757" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#d97757" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="420" rx="24" fill="url(#bg)"/>
+  <rect width="1200" height="420" rx="24" fill="url(#glow)"/>
+
+  <!-- The mark: a clay asterisk with orbiting sessions -->
+  <g transform="translate(215 205)">
+    <circle r="118" fill="none" stroke="#d97757" stroke-opacity="0.18" stroke-width="1.5" stroke-dasharray="3 7"/>
+    <circle r="78" fill="none" stroke="#d97757" stroke-opacity="0.28" stroke-width="1.5"/>
+    <g fill="#d97757">
+      <rect x="-7" y="-52" width="14" height="104" rx="7"/>
+      <rect x="-7" y="-52" width="14" height="104" rx="7" transform="rotate(60)"/>
+      <rect x="-7" y="-52" width="14" height="104" rx="7" transform="rotate(120)"/>
+    </g>
+    <circle cx="78" cy="0" r="9" fill="#e5735f"/>
+    <circle cx="-39" cy="67.5" r="9" fill="#8fbf7f"/>
+    <circle cx="-39" cy="-67.5" r="9" fill="#e0b062"/>
+    <circle cx="83" cy="-83" r="6" fill="#e8a68a" opacity="0.8"/>
+    <circle cx="-110" cy="40" r="6" fill="#7fb4a8" opacity="0.8"/>
+  </g>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+    <text x="400" y="150" fill="#f4ede8" font-size="64" font-weight="700" letter-spacing="-1">claude-modder</text>
+    <text x="402" y="196" fill="#e8a68a" font-size="24">one mind over every Claude Code session</text>
+
+    <g font-size="19" fill="#cbbdb3">
+      <text x="402" y="258"><tspan fill="#d97757">✻ Mind</tspan>   watches every session and learns from how calls end</text>
+      <text x="402" y="292"><tspan fill="#d97757">✻ Skin</tspan>   restyle the workspace by saying what you want</text>
+      <text x="402" y="326"><tspan fill="#d97757">✻ Hands</tspan>  Claude can see its fleet and change its own look</text>
+    </g>
+    <text x="402" y="378" fill="#8a7a70" font-size="16">/skin make tool calls teal and give them a ⚡ badge</text>
+  </g>
+</svg>

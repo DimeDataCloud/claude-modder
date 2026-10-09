@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderInput } from 'claude-code'
 
 import type { Card, GateEntry, Health, JevInfo, Row } from '../types'
 import { age, doing, jevRead, mark, name, newCard, pct, recentOf, rows, title, touch } from './fleet'
@@ -7,6 +7,10 @@ import { jev, keyIn, Queue } from './jev'
 import type { Decider } from './jev'
 import { GATE_QUESTIONS, GONE_MS, HEALTH_QUESTIONS, NEEDS_YOU, gateState, gateVerdict, hardDeny, healthState, list, nudgeText } from './policy'
 import type { Rules } from './policy'
+import { GATE } from './policy'
+import { ALL, EMPTY, PRESETS, targetOf, apply, describeStyle, frame, jsonIn, norm, parse, skinPrompt, themeFile, validOps } from './skin'
+import { MIN_OUTCOMES, calibrate, curve, refused, remember, sparkline } from './learn'
+import type { Calibration, Mind, Skin, SkinOp, SkinTarget, Thresholds } from '../types'
 
 /**
  * Every Claude Code session running this mod writes a card about itself to
@@ -24,9 +28,12 @@ const tick = atom({ plugin: 'modder', key: 'tick' } as const, 0)
 const jevAtom = atom({ plugin: 'modder', key: 'jev' } as const, { mode: 'shadow', calls: 0, fails: 0, cost: 0, lat: [] } as JevInfo)
 const gateLog = atom({ plugin: 'modder', key: 'gate' } as const, [] as GateEntry[])
 const hush = atom({ plugin: 'modder', key: 'hush' } as const, '')
+const skinAtom = atom({ plugin: 'modder', key: 'skin' } as const, EMPTY as Skin)
+const viewAtom = atom({ plugin: 'modder', key: 'view' } as const, 'sessions')
+const mindAtom = atom({ plugin: 'modder', key: 'mind' } as const, { curve: [], phrases: 0, skinBy: { code: 0, memory: 0, claude: 0, none: 0 }, said: [] } as Mind)
 
 /** Tools the gate never asks about: they only read, or they always need the person. */
-const QUIET_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode', 'Read', 'Grep', 'Glob', 'LS', 'TodoWrite', 'TaskList', 'TaskGet', 'ToolSearch', 'NotebookRead'])
+const QUIET_TOOLS = new Set(['mcp__modder__skin', 'mcp__modder__mind', 'AskUserQuestion', 'ExitPlanMode', 'Read', 'Grep', 'Glob', 'LS', 'TodoWrite', 'TaskList', 'TaskGet', 'ToolSearch', 'NotebookRead'])
 const BEAT_MS = 10_000
 const LEAD_STALE_MS = 15_000
 /** The orchestrator looks at a session again no sooner than this. */
@@ -54,6 +61,19 @@ const leadName = (rs: Row[]) => {
   return r ? name(r) : 'none yet'
 }
 let cycle = 0
+
+// ── What it has learned ────────────────────────────────────────────────────
+let skin: Skin = EMPTY
+let history: Skin[] = []
+let saved: Record<string, Skin> = {}
+let phrases: Record<string, SkinOp[]> = {}
+let calib: Calibration | undefined
+/** Calls this session put to the person, by tool_use_id, and what they chose. */
+const asking = new Set<string>()
+const answered = new Map<string, 'yes' | 'no'>()
+let resolvedSince = 0
+/** The gate's thresholds: what the outcomes taught once there are enough, else the shipped ones. */
+const thresholds = (): Thresholds => (calib?.ready ? calib.learned : GATE)
 
 async function expand($: EngineInterface, p: string): Promise<string> {
   return p.startsWith('~') ? `${home}${p.slice(1)}` : p
@@ -248,6 +268,13 @@ async function refresh($: EngineInterface): Promise<void> {
     if (++cycle % 2 === 0) {
       await inbox($)
     }
+    if (cycle % 3 === 0) {
+      const other = (await $.store.get('skin').catch(() => undefined)) as Skin | undefined
+      if (other && typeof other === 'object' && 'parts' in other && JSON.stringify(other) !== JSON.stringify(skin)) {
+        skin = other
+        await update($, skinAtom, () => skin)
+      }
+    }
   } finally {
     refreshing = false
   }
@@ -292,7 +319,7 @@ async function nudge($: EngineInterface, r: Row): Promise<void> {
 
 // ── The gate ───────────────────────────────────────────────────────────────
 
-async function shadowGate($: EngineInterface, tool: string, input: unknown, core: 'allow' | 'ask' | 'deny'): Promise<void> {
+async function shadowGate($: EngineInterface, tool: string, input: unknown, core: 'allow' | 'ask' | 'deny', id: string | undefined): Promise<void> {
   const cwd = card?.root ?? ''
   const at = await $.clock.now()
   const r = await ask($, 0, 10_000, 3_000, gateState(card?.recent ?? [], tool, input, cwd), GATE_QUESTIONS).catch(async (err: unknown) => {
@@ -300,8 +327,11 @@ async function shadowGate($: EngineInterface, tool: string, input: unknown, core
     return undefined
   })
   await writeDiag($, { gateRuns: (diag['gateRuns'] as number) + 1 })
-  const v = r ? gateVerdict(r.answers) : undefined
+  const v = r ? gateVerdict(r.answers, thresholds()) : undefined
+  const human = id ? answered.get(id) : undefined
   const entry: GateEntry = {
+    ...(id ? { id } : {}),
+    ...(human ? { human } : {}),
     at,
     tool,
     what: doing(tool, input),
@@ -326,6 +356,270 @@ export function agreement(g: GateEntry[]): { n: number; agree: number; allows: n
   return { n: judged.length, agree, allows: judged.filter(x => x.jev === 'allow').length, denies: judged.filter(x => x.jev === 'deny').length }
 }
 
+// ── Learning from outcomes ─────────────────────────────────────────────────
+
+/** The person answered a prompt: mark the shadow entry, and relearn every few answers. */
+async function resolved($: EngineInterface, id: string, human: 'yes' | 'no'): Promise<void> {
+  answered.set(id, human)
+  const log = await update($, gateLog, g => g.map(x => (x.id === id ? { ...x, human } : x)))
+  if (card && dir) {
+    await $.fs.write(`${dir}/gate/${card.id}.json`, JSON.stringify(log)).catch(() => undefined)
+  }
+  if (++resolvedSince >= 5) {
+    await relearn($)
+  }
+}
+
+/** Refit the gate to every outcome the fleet has seen, and redraw the Mind. */
+async function relearn($: EngineInterface): Promise<Calibration | undefined> {
+  resolvedSince = 0
+  if (!dir) {
+    return undefined
+  }
+  const files = await $.fs.list(`${dir}/gate`).catch(() => [])
+  const logs = await Promise.all(files.filter(f => f.kind === 'file' && f.name.endsWith('.json')).map(f => readJson<GateEntry[]>($, `${dir}/gate/${f.name}`)))
+  const all = logs.flatMap(l => (Array.isArray(l) ? l : [])).sort((a, b) => a.at - b.at)
+  calib = calibrate(all, GATE, await $.clock.now())
+  await $.store.set('calibration', calib).catch(() => undefined)
+  await update($, mindAtom, m => ({ ...m, calibration: calib, curve: curve(all) }))
+  return calib
+}
+
+// ── The skin ───────────────────────────────────────────────────────────────
+
+/** Write the engine colours to the theme file Claude Code reloads live; switch to it when it holds any. */
+async function writeTheme($: EngineInterface, s: Skin): Promise<string | undefined> {
+  if (!home) {
+    return undefined
+  }
+  const rows = await $.config.list().catch(() => [])
+  const cur = rows.find(r => r.key === 'theme')
+  const now = typeof cur?.value === 'string' ? cur.value : 'dark'
+  const prev = ((await $.store.get('baseTheme').catch(() => undefined)) as string | undefined) ?? (now.startsWith('custom:') ? 'dark' : now)
+  const file = themeFile(s, prev)
+  await $.fs.write(`${home}/.claude/themes/modder.json`, JSON.stringify(file ?? { name: 'Modder', base: /light/.test(prev) ? 'light' : 'dark', overrides: {} }, null, 2)).catch(() => undefined)
+  if (file && now !== 'custom:modder') {
+    await $.store.set('baseTheme', now).catch(() => undefined)
+    const r = await $.config.set({ key: 'theme', value: 'custom:modder' }).catch((err: unknown) => ({ deny: String(err) }))
+    if ('deny' in r && r.deny) {
+      return 'engine colours saved: pick "Modder" in /theme to see them'
+    }
+  }
+  if (!file && now === 'custom:modder') {
+    await $.config.set({ key: 'theme', value: prev }).catch(() => undefined)
+  }
+  return undefined
+}
+
+async function persistSkin($: EngineInterface): Promise<void> {
+  await Promise.all([$.store.set('skin', skin), $.store.set('skinHistory', history.slice(-20)), $.store.set('skins', saved)]).catch(() => undefined)
+  await update($, skinAtom, () => skin)
+}
+
+/**
+ * One request to restyle the workspace, from the person (/skin) or from
+ * Claude (its skin tool). Code reads it first; a phrase code cannot read goes
+ * to Claude once, and what it meant is remembered so it parses free next time.
+ */
+async function restyle($: EngineInterface, text: string, given?: unknown): Promise<string[]> {
+  let ops: SkinOp[] = []
+  let by: keyof Mind['skinBy'] = 'code'
+  if (given !== undefined) {
+    ops = validOps(given)
+    by = 'claude'
+  } else {
+    const remembered = !!phrases[norm(text)]
+    const p = parse(text, phrases)
+    ops = p.ops
+    by = remembered ? 'memory' : 'code'
+    for (const u of p.unknown) {
+      const r = await $.model.complete({ model: 'haiku', prompt: skinPrompt(u, skin), maxTokens: 700, effort: 'low', timeoutMs: 20_000 }).catch(() => undefined)
+      const got = r?.isAnswered ? validOps(jsonIn(r.text)) : []
+      if (got.length) {
+        ops.push(...got)
+        phrases = remember(phrases, norm(u), got)
+        by = 'claude'
+      } else if (!ops.length) {
+        by = 'none'
+      }
+    }
+    if (by === 'claude') {
+      await $.store.set('phrases', phrases).catch(() => undefined)
+    }
+  }
+  const out = apply(skin, ops, history, saved)
+  skin = out.skin
+  history = out.history
+  saved = out.saved
+  const said = [...out.said]
+  if (out.theme) {
+    const r = await $.config.set({ key: 'theme', value: out.theme }).catch((err: unknown) => ({ deny: String(err) }))
+    await $.store.set('baseTheme', out.theme).catch(() => undefined)
+    if ('deny' in r && r.deny) said.push(`the theme stayed: ${r.deny}`)
+  }
+  if (ops.some(o => o.kind !== 'theme')) {
+    const note = await writeTheme($, skin)
+    if (note) said.push(note)
+  }
+  await persistSkin($)
+  const line = said.length ? said.join(' · ') : `didn't catch "${text.slice(0, 60)}"`
+  const m = await update($, mindAtom, x => ({ ...x, phrases: Object.keys(phrases).length, skinBy: { ...x.skinBy, [by]: x.skinBy[by] + 1 }, said: [...x.said, line].slice(-6) }))
+  await $.store.set('skinBy', m.skinBy).catch(() => undefined)
+  return said
+}
+
+async function openTab($: EngineInterface, tab: string): Promise<void> {
+  await update($, viewAtom, () => tab)
+  await $.ui.open({ id: PANE, title: 'Modder' })
+}
+
+// ── The pane's other two tabs ──────────────────────────────────────────────
+
+const TABS = [
+  ['sessions', 'Sessions', '1'],
+  ['skin', 'Skin', '2'],
+  ['mind', 'Mind', '3'],
+] as const
+
+function tabs($: EngineInterface, e: RenderInput<'Pane'>, view: string) {
+  const { Box, Button, Text } = $.ui.resolve(e)
+  return (
+    <Box key="tabs" flexDirection="row" columnGap={2}>
+      <Text key="logo" color="claude" bold>✻ modder</Text>
+      {TABS.map(([id, label, key]) =>
+        id === view ? (
+          <Text key={`t-${id}`} color="claude" bold underline>{label}</Text>
+        ) : (
+          <Button key={`t-${id}`} label={label} hotkey={key} plain dimColor onPress={() => update($, viewAtom, () => id).then(() => undefined)} />
+        ),
+      )}
+    </Box>
+  )
+}
+
+const PART_LABEL: Record<SkinTarget, string> = {
+  user: 'Your messages',
+  assistant: 'Claude replies',
+  tools: 'Tool calls',
+  spinner: 'Spinner',
+  notices: 'Notices',
+  commands: 'Command output',
+  questions: 'Questions',
+  band: 'Attention band',
+  panes: 'Panes',
+}
+
+async function skinPane($: EngineInterface, e: RenderInput<'Pane'>) {
+  const { Box, Button, Text } = $.ui.resolve(e)
+  const [s, m] = await Promise.all([read($, skinAtom), read($, mindAtom)])
+  const cols = Math.max(48, Math.min(160, e.props.bodyColumns))
+  const w = Math.max(22, Math.floor((cols - 6) / 3))
+  const tokens = Object.entries(s.tokens ?? {})
+  return (
+    <Box key="skin" flexDirection="column" rowGap={1} width={cols}>
+      {tabs($, e, 'skin')}
+      <Box key="head" flexDirection="column">
+        <Text key="n" bold>{s.name ? `Wearing ${s.name}` : Object.keys(s.parts).length || tokens.length ? 'A look of your own' : 'The plain look'}</Text>
+        <Text key="h" dimColor wrap="truncate">Say it in words: /skin make tool calls teal · /skin overlay 🔒 on tool calls · /skin warmer · /skin sunset · /skin undo</Text>
+      </Box>
+      <Box key="parts" flexDirection="row" flexWrap="wrap" columnGap={1}>
+        {ALL.map(t => {
+          const st = s.parts[t]
+          const f = frame(st) ?? {}
+          return (
+            <Box key={`p-${t}`} width={w} borderStyle={f.borderStyle ?? 'single'} borderColor={f.borderColor ?? 'inactive'} borderDimColor={!st} {...(f.backgroundColor ? { backgroundColor: f.backgroundColor } : {})} flexDirection="column" paddingX={1}>
+              <Text key="l" bold color={st ? 'text' : 'inactive'} wrap="truncate">{`${st?.badge ? `${st.badge} ` : ''}${PART_LABEL[t]}`}</Text>
+              <Text key="d" dimColor wrap="truncate">{st ? describeStyle(st) || 'styled' : 'as Claude draws it'}</Text>
+            </Box>
+          )
+        })}
+      </Box>
+      {tokens.length ? (
+        <Box key="tok" flexDirection="row" flexWrap="wrap" columnGap={2}>
+          <Text key="l" dimColor>Engine colours</Text>
+          {tokens.map(([k, v]) => (
+            <Text key={`k-${k}`} color={v}>{`■ ${k}`}</Text>
+          ))}
+        </Box>
+      ) : null}
+      <Box key="looks" flexDirection="row" flexWrap="wrap" columnGap={2}>
+        <Text key="l" dimColor>Looks</Text>
+        {Object.keys(PRESETS).map(p => (
+          <Button key={`l-${p}`} label={p} plain onPress={() => restyle($, p).then(() => undefined)} />
+        ))}
+      </Box>
+      <Box key="act" flexDirection="row" columnGap={2}>
+        <Button key="u" label="Undo" hotkey="u" plain onPress={() => restyle($, 'undo').then(() => undefined)} />
+        <Button key="x" label="Plain" hotkey="x" plain onPress={() => restyle($, 'reset').then(() => undefined)} />
+        {Object.keys(saved).map(n => (
+          <Button key={`s-${n}`} label={`wear ${n}`} plain onPress={() => restyle($, `wear ${n}`).then(() => undefined)} />
+        ))}
+      </Box>
+      {m.said.length ? (
+        <Box key="said" flexDirection="column">
+          {m.said.slice(-4).map((l, i) => (
+            <Text key={`s${i}`} dimColor wrap="truncate">{`› ${l}`}</Text>
+          ))}
+        </Box>
+      ) : null}
+    </Box>
+  )
+}
+
+const pc = (x: number) => `${Math.round(x * 100)}%`
+
+function bar(x: number, of: number, width = 20): string {
+  const f = Math.max(0, Math.min(width, Math.round((x / Math.max(1, of)) * width)))
+  return '█'.repeat(f) + '░'.repeat(width - f)
+}
+
+const th = (t: Thresholds) => `allow: serves ≥ ${pc(t.allowServes)} & risk ≤ ${pc(t.allowRisk)}   deny: risk ≥ ${pc(t.denyRisk)} & serves ≤ ${pc(t.denyServes)}`
+
+async function mindPane($: EngineInterface, e: RenderInput<'Pane'>) {
+  const { Box, Button, Text } = $.ui.resolve(e)
+  const [m, j, rs, g] = await Promise.all([read($, mindAtom), read($, jevAtom), read($, fleet), read($, gateLog)])
+  const cols = Math.max(48, Math.min(160, e.props.bodyColumns))
+  const c = m.calibration
+  const n = c?.n ?? 0
+  const by = m.skinBy
+  const asked = g.filter(x => x.core === 'ask')
+  return (
+    <Box key="mind" flexDirection="column" rowGap={1} width={cols}>
+      {tabs($, e, 'mind')}
+      <Box key="fleet" flexDirection="row" flexWrap="wrap" columnGap={2}>
+        <Text key="l" dimColor>Fleet</Text>
+        {rs.length ? rs.map(r => <Text key={`f-${r.id}`} color={r.tone}>{`${mark(r, 0)} ${name(r)}`}</Text>) : [<Text key="none" dimColor>just this session</Text>]}
+      </Box>
+      <Box key="gate" flexDirection="column">
+        <Text key="h" bold>The gate learns from how calls end</Text>
+        {!c || !c.ready ? (
+          <Text key="p" color="suggestion">{`${bar(n, MIN_OUTCOMES)} ${n}/${MIN_OUTCOMES} outcomes before it may retune itself`}</Text>
+        ) : (
+          <Text key="p" color="success">{`${bar(n, n)} fitted to ${n} outcomes · ${c.ran} ran · ${c.blocked} blocked`}</Text>
+        )}
+        <Text key="b" dimColor wrap="truncate">{`shipped  ${th(c?.base ?? GATE)}`}</Text>
+        <Text key="a" color={c?.ready ? 'claude' : 'inactive'} wrap="truncate">{`learned  ${th(c?.learned ?? GATE)}`}</Text>
+        {c ? (
+          <Text key="s" dimColor wrap="truncate">{`on the evidence: shipped settles ${c.before.allows + c.before.denies} (${c.before.wrong} wrong) · learned settles ${c.after.allows + c.after.denies} (${c.after.wrong} wrong)`}</Text>
+        ) : null}
+        <Text key="q" dimColor wrap="truncate">{`${asked.length} call${asked.length === 1 ? '' : 's'} put to you this session · ${asked.filter(x => x.human).length} answered · a learned threshold may never get a known outcome wrong`}</Text>
+      </Box>
+      <Box key="curve" flexDirection="column">
+        <Text key="h" bold>Agreement with outcomes</Text>
+        <Text key="c" color="claude">{m.curve.length ? `${sparkline(m.curve, Math.min(48, cols - 12))}  ${pc(m.curve.at(-1) ?? 0)} now` : 'no decided calls with an outcome yet'}</Text>
+      </Box>
+      <Box key="skin" flexDirection="column">
+        <Text key="h" bold>The skin learns your words</Text>
+        <Text key="b" dimColor wrap="truncate">{`read by code ${by.code} · from memory ${by.memory} · by Claude ${by.claude} · missed ${by.none} · ${m.phrases} phrase${m.phrases === 1 ? '' : 's'} learned`}</Text>
+      </Box>
+      <Text key="jev" dimColor wrap="truncate">{j.mode === 'off' ? 'Jev off' : `Jev ${j.mode} · ${j.calls} calls · ${j.lat.length ? `p50 ${pct(j.lat, 50)}ms · ` : ''}${j.cost.toFixed(4)}${j.down ? ` · ${j.down}` : ''}`}</Text>
+      <Box key="act" flexDirection="row" columnGap={2}>
+        <Button key="r" label="Relearn now" hotkey="r" plain onPress={() => relearn($).then(() => undefined)} />
+      </Box>
+    </Box>
+  )
+}
+
 // ── Registration ───────────────────────────────────────────────────────────
 
 export const register: Register = (on, options) => {
@@ -342,6 +636,40 @@ export const register: Register = (on, options) => {
       argumentHint: '[lead | nudge <n> | gate | close]',
       immediate: true,
     })
+    await $.command.register({
+      name: 'skin',
+      description: 'Restyle the workspace in plain words: "make tool calls teal", "overlay 🔒 on tool calls", "sunset", "warmer", "undo"',
+      argumentHint: '<what you want it to look like>',
+      immediate: true,
+    })
+    await $.tool.register({
+      name: 'skin',
+      description:
+        'Restyle the Claude Code workspace the person is looking at. Use when they ask to change how it looks (colours, borders, overlays, a mood, a named look). Pass their words as request, or precise ops. Parts: user, assistant, tools, spinner, notices, commands, questions, band, panes. Looks: ' +
+        Object.keys(PRESETS).join(', ') +
+        '. Returns what changed.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          request: { type: 'string', description: 'What they want, in their words: "make tool calls teal and give them a lock badge"' },
+          ops: { type: 'array', description: 'Optional precise ops instead of words, as the skin schema defines them', items: { type: 'object' } },
+        },
+      },
+      isDeferred: false,
+    })
+    await $.tool.register({
+      name: 'mind',
+      description: 'What the modder orchestrator knows right now: every open Claude Code session and what it needs, what the permission gate has learned from outcomes, and the current skin. Use to answer "what are my other sessions doing" or "what have you learned".',
+      inputSchema: { type: 'object', properties: {} },
+    })
+    const [sk, hi, sv, ph, ca, sb] = await Promise.all(['skin', 'skinHistory', 'skins', 'phrases', 'calibration', 'skinBy'].map(k => $.store.get(k).catch(() => undefined)))
+    if (sk && typeof sk === 'object' && 'parts' in sk) skin = sk as Skin
+    if (Array.isArray(hi)) history = hi as Skin[]
+    if (sv && typeof sv === 'object') saved = sv as Record<string, Skin>
+    if (ph && typeof ph === 'object') phrases = ph as Record<string, SkinOp[]>
+    if (ca && typeof ca === 'object' && 'learned' in ca) calib = ca as Calibration
+    await update($, skinAtom, () => skin)
+    await update($, mindAtom, m => ({ ...m, calibration: calib, phrases: Object.keys(phrases).length, ...(sb && typeof sb === 'object' && 'code' in sb ? { skinBy: sb as Mind['skinBy'] } : {}) }))
     home = slash((await $.env.get('USERPROFILE')) || (await $.env.get('HOME')) || '')
     if (!home) {
       return res
@@ -377,6 +705,7 @@ export const register: Register = (on, options) => {
     }))
 
     await refresh($)
+    await relearn($).catch(() => undefined)
     $.clock.every(3000, () => void refresh($).catch(() => undefined))
     // The heartbeat of the view: spinners turn while anyone works.
     $.clock.every(250, () => {
@@ -442,7 +771,13 @@ export const register: Register = (on, options) => {
       ...(asks ? { state: 'asking' as const } : { state: 'working' as const }),
     })
     try {
-      return await next(e)
+      const res = await next(e)
+      const id = e.tool_use_id
+      if (id && asking.has(id)) {
+        asking.delete(id)
+        await resolved($, id, refused(res) ? 'no' : 'yes')
+      }
+      return res
     } finally {
       if (card && (isAgent || asks)) {
         await save($, { ...(isAgent ? { agents: Math.max(0, card.agents - 1) } : {}), ...(asks ? { state: 'working' as const } : {}) })
@@ -460,19 +795,22 @@ export const register: Register = (on, options) => {
     // and deny (settings rules, mode, classic hooks) always stand.
     if (asked && mode === 'enforce' && res.decision === 'ask' && e.tool !== 'AskUserQuestion') {
       const r = await ask($, 0, 1500, 1500, gateState(card?.recent ?? [], e.tool, e.input, card?.root ?? ''), GATE_QUESTIONS).catch(() => undefined)
-      const v = r ? gateVerdict(r.answers) : undefined
+      const v = r ? gateVerdict(r.answers, thresholds()) : undefined
       if (v?.verdict === 'allow') {
-        return { decision: 'allow', reason: `Jev: serves the request (${Math.round(v.serves * 100)}%), every risk low` }
+        return { decision: 'allow', reason: `Jev${calib?.ready ? ' (learned thresholds)' : ''}: serves the request (${Math.round(v.serves * 100)}%), every risk low` }
       }
       if (v?.verdict === 'deny') {
         return { decision: 'deny', reason: `Jev: likely ${v.top} (${Math.round(v.risk * 100)}%) and not what you asked for` }
       }
     }
+    if (real && res.decision === 'ask' && e.tool_use_id) {
+      asking.add(e.tool_use_id)
+    }
     if (real && e.agentId === undefined && res.decision === 'ask' && e.tool !== 'AskUserQuestion' && card) {
       await save($, { state: 'asking', doing: `permission: ${doing(e.tool, e.input)}` })
     }
     if (asked && mode === 'shadow') {
-      void shadowGate($, e.tool, e.input, res.decision).catch(() => undefined)
+      void shadowGate($, e.tool, e.input, res.decision, e.tool_use_id).catch(() => undefined)
     }
     return res
   })
@@ -481,6 +819,10 @@ export const register: Register = (on, options) => {
     const [verb = '', arg = ''] = e.args.trim().split(/\s+/)
     if (verb === 'close') {
       await $.ui.close({ id: PANE })
+      return {}
+    }
+    if (verb === 'skin' || verb === 'mind') {
+      await openTab($, verb)
       return {}
     }
     if (verb === 'lead') {
@@ -499,15 +841,76 @@ export const register: Register = (on, options) => {
       return {}
     }
     await refresh($)
-    await $.ui.open({ id: PANE, title: 'Sessions' })
+    await openTab($, 'sessions')
     return {}
   })
+
+  on('command.run', { command: 'skin' }, async ($, e) => {
+    const text = e.args.trim()
+    if (!text) {
+      await openTab($, 'skin')
+      return {}
+    }
+    const said = await restyle($, text)
+    $.ui.toast(said.length ? `✻ ${said.join(' · ')}` : `✻ didn't catch that: try "make tool calls teal" or "sunset"`)
+    return {}
+  })
+
+  // Claude's own hands on the workspace.
+  on('tool.call', { tool: 'mcp__modder__skin' }, async ($, e) => {
+    const input = e as unknown as { request?: unknown; ops?: unknown }
+    const req = typeof input.request === 'string' ? input.request : ''
+    const said = Array.isArray(input.ops) && input.ops.length ? await restyle($, req || 'ops from Claude', input.ops) : req ? await restyle($, req) : []
+    const text = said.length ? `Done: ${said.join('; ')}. Current skin: ${JSON.stringify({ name: skin.name, parts: skin.parts, tokens: skin.tokens ?? {} })}` : 'Nothing changed: the request named no part, colour or look the skin understood.'
+    return { result: text }
+  }).catch(() => ({ result: 'The modder tool failed; nothing changed.' }))
+
+  on('tool.call', { tool: 'mcp__modder__mind' }, async ($, e) => {
+    const rs = await read($, fleet)
+    const m = await read($, mindAtom)
+    const text = JSON.stringify({
+      sessions: rs.map(r => ({ title: title(r), repo: r.repo, branch: r.branch, state: r.state, why: r.why, needsYou: r.rank >= NEEDS_YOU, doing: r.doing })),
+      gate: m.calibration ? { outcomes: m.calibration.n, ready: m.calibration.ready, shipped: m.calibration.base, learned: m.calibration.learned, before: m.calibration.before, after: m.calibration.after } : 'no outcomes yet',
+      agreement: m.curve.at(-1),
+      skin: { name: skin.name, parts: skin.parts, tokens: skin.tokens ?? {}, phrasesLearned: m.phrases, understoodBy: m.skinBy },
+    })
+    return { result: text }
+  }).catch(() => ({ result: 'The modder tool failed; nothing changed.' }))
+
+  // The skin on everything the engine draws: a frame, a fill, an overlay badge.
+  on(
+    'ui.render',
+    { component: ['UserMessage', 'AssistantMessage', 'ToolUse', 'ToolResult', 'ToolGroup', 'ToolProgress', 'Spinner', 'InfoNotice', 'TurnDuration', 'CommandOutput', 'AskUserQuestion'] },
+    async ($, e, next) => {
+        const t = targetOf(e.component)
+        const st = t ? (await read($, skinAtom)).parts[t] : undefined
+        const f = frame(st)
+        if (!st || !f) {
+          return next(e)
+        }
+        const { Box, Text } = $.ui.resolve(e)
+        const inner = await next(e)
+        if (st.hidden) {
+          return <Box key="skin" display="none">{inner}</Box>
+        }
+        if (!st.badge) {
+          return <Box key="skin" {...f}>{inner}</Box>
+        }
+        return (
+          <Box key="skin" {...f} flexDirection="row" columnGap={1}>
+            <Text key="badge" color={st.badgeColor ?? st.border ?? 'claude'} bold>{st.badge}</Text>
+            <Box key="in" flexDirection="column" flexGrow={1} flexShrink={1}>{inner}</Box>
+          </Box>
+        )
+    },
+  )
 
   // Footer: `fleet 3 · 1 needs you`, only when there is more than this session.
   on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
     const rs = await read($, fleet)
+    const sk = await read($, skinAtom)
     if (rs.length < 2) {
-      return next(e)
+      return sk.name ? next({ ...e, props: { ...e.props, modes: [...e.props.modes, `✻ ${sk.name}`] } }) : next(e)
     }
     const id = await read($, me)
     const need = rs.filter(r => r.id !== id && r.rank >= NEEDS_YOU).length
@@ -527,9 +930,10 @@ export const register: Register = (on, options) => {
     }
     const { Box, Button, Text } = $.ui.resolve(e)
     const now = Date.now()
+    const bf = frame((await read($, skinAtom)).parts.band) ?? {}
     // One row: who, why, how long; then the ways through.
     return (
-      <Box key="modder-band" flexDirection="row" columnGap={2}>
+      <Box key="modder-band" {...bf} flexDirection="row" columnGap={2}>
         <Text key="m" color={top.tone} bold>{mark(top, 0)}</Text>
         <Box key="t" flexShrink={0}>
           <Text bold>{name(top)}</Text>
@@ -548,6 +952,13 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const view = await read($, viewAtom)
+    if (view === 'skin') {
+      return skinPane($, e)
+    }
+    if (view === 'mind') {
+      return mindPane($, e)
+    }
     const { Box, Button, Text } = $.ui.resolve(e)
     const [rs, id, lead, t, j, g] = await Promise.all([read($, fleet), read($, me), read($, leadAtom), read($, tick), read($, jevAtom), read($, gateLog)])
     const now = Date.now()
@@ -619,6 +1030,7 @@ export const register: Register = (on, options) => {
 
     return (
       <Box key="modder" flexDirection="column" rowGap={1} width={cols}>
+        {tabs($, e, 'sessions')}
         <Box key="h" flexDirection="row" columnGap={2} flexWrap="wrap">
           <Text key="t" bold>{head.join(' · ')}</Text>
           <Button key="lead" label="Lead from here" hotkey="l" plain onPress={() => elect($, Date.now(), true).then(() => undefined)} />

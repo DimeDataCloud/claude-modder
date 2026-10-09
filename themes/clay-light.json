@@ -1,0 +1,16 @@
+{
+  "name": "Clay Light (modder)",
+  "base": "light",
+  "overrides": {
+    "claude": "#c15f3c",
+    "promptBorder": "#c15f3c",
+    "suggestion": "#a65a3f",
+    "permission": "#7a4fc4",
+    "planMode": "#2f7a6b",
+    "autoAccept": "#a8741a",
+    "bashBorder": "#b0436d",
+    "success": "#3f7a32",
+    "error": "#c03a26",
+    "warning": "#a8741a"
+  }
+}
