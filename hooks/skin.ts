@@ -21,6 +21,7 @@ export const TARGETS: Record<SkinTarget, readonly RenderComponent[]> = {
   questions: ['AskUserQuestion'],
   band: ['AbovePrompt'],
   panes: ['Pane'],
+  footer: ['SessionMode', 'PromptHint'],
 }
 export const ALL = Object.keys(TARGETS) as SkinTarget[]
 
@@ -45,6 +46,7 @@ const NOUNS: [RegExp, SkinTarget[]][] = [
   [/\b(questions?|dialogs?|ask(user)?question)\b/, ['questions']],
   [/\b(band|above the prompt|prompt band|attention (band|row))\b/, ['band']],
   [/\b(panes?|panels?|sidebar|side panel)\b/, ['panes']],
+  [/\b(footer|hint line|hints|mode labels?|bottom (bar|line|row))\b/, ['footer']],
 ]
 
 /** CSS colour names a person is likely to say, plus Claude's own. */

@@ -91,7 +91,7 @@ export type JevInfo = {
 // ── The skin ─────────────────────────────────────────────────────────────
 
 /** A part of the workspace a skin paints. */
-export type SkinTarget = 'user' | 'assistant' | 'tools' | 'spinner' | 'notices' | 'commands' | 'questions' | 'band' | 'panes'
+export type SkinTarget = 'user' | 'assistant' | 'tools' | 'spinner' | 'notices' | 'commands' | 'questions' | 'band' | 'panes' | 'footer'
 
 /** How one part is drawn: colours are #rrggbb or a theme key. */
 export type SkinStyle = {

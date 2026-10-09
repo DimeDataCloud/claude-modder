@@ -4,7 +4,7 @@ import { expect, test } from 'claude-code/testing'
 import type { GateEntry, Skin, SkinOp } from '../types'
 import { FLOOR, MIN_OUTCOMES, calibrate, curve, outcome, refused, remember, sparkline, verdictWith } from './learn'
 import { GATE } from './policy'
-import { ALL, EMPTY, NAMED, PRESETS, PRESET_TOKENS, apply, colorIn, frame, fromHsl, hex, jsonIn, norm, parse, shade, skinPrompt, themeFile, toHsl, validOps } from './skin'
+import { ALL, EMPTY, NAMED, TARGETS, PRESETS, PRESET_TOKENS, apply, colorIn, frame, fromHsl, hex, jsonIn, norm, parse, shade, skinPrompt, themeFile, toHsl, validOps } from './skin'
 
 // ── The parser: plain words to ops ────────────────────────────────────────
 
@@ -22,6 +22,18 @@ test('skin: a part and a colour paint that part', () => {
   expect(u?.borderStyle).toBe('double')
   // Only the part named is touched.
   expect(Object.keys(one('make tool calls blue').skin.parts)).toEqual(['tools'])
+})
+
+test('skin: every part the engine lets a mod draw belongs to a part you can name', () => {
+  // The engine's whole RenderComponent union, as of 2.1.293. The band and panes are drawn by
+  // their own hooks; everything else is wrapped by the skin.
+  const drawable = ['AskUserQuestion', 'UserMessage', 'AssistantMessage', 'ToolUse', 'ToolResult', 'ToolGroup', 'ToolProgress', 'CommandOutput', 'Spinner', 'TurnDuration', 'InfoNotice', 'SessionMode', 'PromptHint', 'AbovePrompt', 'Pane']
+  const covered = Object.values(TARGETS).flat()
+  expect([...covered].sort()).toEqual([...drawable].sort())
+  const f = one('make the footer purple and give it a ✻ badge').skin.parts.footer
+  expect(f?.border).toBe(NAMED['purple'])
+  expect(f?.badge).toBe('✻')
+  expect(one('hide the footer').skin.parts.footer?.hidden).toBeUndefined()
 })
 
 test('skin: backgrounds, shades and overlays', () => {
@@ -320,7 +332,7 @@ test("Claude's skin tool restyles the workspace and says what changed", async ($
   expect(JSON.stringify(bad)).toMatch(/Nothing changed/)
 })
 
-const worn: Skin = { parts: { tools: { border: '#12a594', borderStyle: 'double', badge: '⚡' }, spinner: { hidden: true } }, rev: 3 }
+const worn: Skin = { parts: { tools: { border: '#12a594', borderStyle: 'double', badge: '⚡' }, spinner: { hidden: true }, footer: { border: '#d97757', borderStyle: 'round' } }, rev: 3 }
 
 function wear(on: On, view = 'sessions') {
   on('state.get', ($, e, next) => (e.key === 'skin' ? { value: { value: worn, version: 1 } } : e.key === 'view' ? { value: { value: view, version: 1 } } : next(e)))
@@ -350,6 +362,19 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(drawn).toMatch(/"borderColor":"#12a594"/)
     expect(drawn).toMatch(/"borderStyle":"double"/)
   })
+
+  for (const [component, props] of [
+    ['SessionMode', { modes: ['focus'] }],
+    ['PromptHint', { isDraft: false, isWorking: false, hint: '? for shortcuts' }],
+  ] as const) {
+    test(`${surface}: the footer's ${component} wears the skin too`, async ($, on) => {
+      wear(on)
+      const ui = await $.ui.mount({ plugin: 'modder', surface, component, props: props as never })
+      expect(await ui.find({ key: 'skin' })).toBeDefined()
+      expect(await ui.find({ text: "the engine's own row" })).toBeDefined()
+      expect(JSON.stringify(await ui.drawn())).toMatch(/"borderColor":"#d97757"/)
+    })
+  }
 
   test(`${surface}: a part the skin leaves alone is the engine's, untouched`, async ($, on) => {
     wear(on)

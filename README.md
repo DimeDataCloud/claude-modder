@@ -37,7 +37,7 @@ Plain function hooks, with no daemon, server or build step. It runs in the termi
 **How a sentence becomes a look:**
 
 1. **Code reads it first.** A parser in [`hooks/skin.ts`](hooks/skin.ts) splits the sentence into clauses and reads each one:
-   - the parts named: your messages, Claude's replies, tool calls, spinner, notices, command output, questions, the attention band, panes;
+   - the parts named: your messages, Claude's replies, tool calls, spinner, notices, command output, questions, the attention band, panes, the footer;
    - colours: 44 names, `#hex`, and *dark / light / pale / bright / muted* shades;
    - border styles, overlay badges and relative moods (*warmer*, *calmer*, *bolder*);
    - ten named looks, `undo`, and `save` / `wear`.
@@ -50,7 +50,7 @@ Plain function hooks, with no daemon, server or build step. It runs in the termi
 
 | Layer | What it paints | Where |
 |---|---|---|
-| Render wrappers (`ui.render` on 11 components) | A frame, fill, padding or overlay badge around messages, tool rows, the spinner, notices, questions, the band and panes. The engine's own row is kept intact inside. | Terminal **and** the desktop Code tab |
+| Render wrappers (`ui.render` on **all 15** components a mod may draw) | A frame, fill, padding or overlay badge around messages, tool rows, the spinner, notices, questions, the band, panes and the footer (mode labels and hint line). The engine's own row is kept intact inside. | Terminal **and** the desktop Code tab |
 | Engine colour tokens (`~/.claude/themes/modder.json`) | The prompt box, the accent, diffs, errors, suggestions, permission and plan-mode colours, which no wrapper can reach | Terminal. Claude Code reloads the file live. Choose **Modder** once in `/theme`. |
 
 The **Skin** tab (`/skin` with no words) draws every part as a live swatch, shows the engine colours as you set them, and has a button for each look plus Undo and Plain.
@@ -124,7 +124,7 @@ The mod registers two tools the model can call:
 
 ## Verified
 
-Every claim above is tested. `claude plugin test .` runs **40 tests**:
+Every claim above is tested. `claude plugin test .` runs **45 tests**:
 
 | What | How it's proven |
 |---|---|
@@ -134,8 +134,9 @@ Every claim above is tested. `claude plugin test .` runs **40 tests**:
 | Learning | Approvals widen allow only as far as the evidence goes; refusals teach deny; a fit can't be forced past a contradiction |
 | A safety **property** | Across 400 random noisy histories, a fit is never wrong more often than the shipped gate, nor laxer than the floor |
 | Memory | A phrase only Claude reads costs one model call; the same phrase again costs zero |
-| Rendering | Skinned parts draw inside their frame with the engine's row kept; untouched parts stay untouched, on terminal and desktop |
-| Mutation testing | Seven deliberate bugs in the safety-critical lines; every one turns the suite red |
+| Rendering | Skinned parts draw inside their frame with the engine's row kept; untouched parts stay untouched; the footer wears the skin, on terminal and desktop |
+| Coverage | Every component in the engine's `RenderComponent` union (15 of 15) belongs to a part you can name |
+| Mutation testing | Ten deliberate bugs in the safety-critical and coverage lines; every one turns the suite red |
 
 **Live, 2026-10-09**, in a real `claude -p` with the mod loaded:
 - Claude called its own `skin` tool to wear *sunset* with a ✻ badge on its replies.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 · 2026-10-09
+
+- **Skin covers every part a mod may draw.** The footer (mode labels and the hint line) is now a part: `/skin make the footer claude orange`. All 15 components in Claude Code's `RenderComponent` union are reachable, in the terminal and the desktop Code tab.
+- **Tests.** 45 tests. A coverage test pins the skin to the engine's full component list; three more planted bugs are caught.
+
 ## 0.2.0 · 2026-10-09
 
 - **Skin.** Natural-language workspace editing with `/skin <words>`.

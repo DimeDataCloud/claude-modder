@@ -1,6 +1,6 @@
 {
   "name": "modder",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "One orchestrator over every Claude Code session you have open, with Jev (TypeSafe System One) deciding which one needs you",
   "author": {
     "name": "Christian Dixon"

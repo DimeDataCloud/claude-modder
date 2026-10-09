@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderInput } from 'claude-code'
+import type { EngineInterface, Register, RenderElement, RenderInput } from 'claude-code'
 
 import type { Card, GateEntry, Health, JevInfo, Row } from '../types'
 import { age, doing, jevRead, mark, name, newCard, pct, recentOf, rows, title, touch } from './fleet'
@@ -507,6 +507,31 @@ const PART_LABEL: Record<SkinTarget, string> = {
   questions: 'Questions',
   band: 'Attention band',
   panes: 'Panes',
+  footer: 'Footer',
+}
+
+/** Wear the skin on one drawn part: a frame, a fill, an overlay badge, or nothing. */
+async function dress($: EngineInterface, e: RenderInput, drawn: Promise<RenderElement>): Promise<RenderElement> {
+  const t = targetOf(e.component)
+  const st = t ? (await read($, skinAtom)).parts[t] : undefined
+  const f = frame(st)
+  if (!st || !f) {
+    return drawn
+  }
+  const { Box, Text } = $.ui.resolve(e)
+  const inner = await drawn
+  if (st.hidden) {
+    return <Box key="skin" display="none">{inner}</Box>
+  }
+  if (!st.badge) {
+    return <Box key="skin" {...f}>{inner}</Box>
+  }
+  return (
+    <Box key="skin" {...f} flexDirection="row" columnGap={1}>
+      <Text key="badge" color={st.badgeColor ?? st.border ?? 'claude'} bold>{st.badge}</Text>
+      <Box key="in" flexDirection="column" flexGrow={1} flexShrink={1}>{inner}</Box>
+    </Box>
+  )
 }
 
 async function skinPane($: EngineInterface, e: RenderInput<'Pane'>) {
@@ -645,7 +670,7 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: 'skin',
       description:
-        'Restyle the Claude Code workspace the person is looking at. Use when they ask to change how it looks (colours, borders, overlays, a mood, a named look). Pass their words as request, or precise ops. Parts: user, assistant, tools, spinner, notices, commands, questions, band, panes. Looks: ' +
+        'Restyle the Claude Code workspace the person is looking at. Use when they ask to change how it looks (colours, borders, overlays, a mood, a named look). Pass their words as request, or precise ops. Parts: user, assistant, tools, spinner, notices, commands, questions, band, panes, footer. Looks: ' +
         Object.keys(PRESETS).join(', ') +
         '. Returns what changed.',
       inputSchema: {
@@ -880,29 +905,8 @@ export const register: Register = (on, options) => {
   // The skin on everything the engine draws: a frame, a fill, an overlay badge.
   on(
     'ui.render',
-    { component: ['UserMessage', 'AssistantMessage', 'ToolUse', 'ToolResult', 'ToolGroup', 'ToolProgress', 'Spinner', 'InfoNotice', 'TurnDuration', 'CommandOutput', 'AskUserQuestion'] },
-    async ($, e, next) => {
-        const t = targetOf(e.component)
-        const st = t ? (await read($, skinAtom)).parts[t] : undefined
-        const f = frame(st)
-        if (!st || !f) {
-          return next(e)
-        }
-        const { Box, Text } = $.ui.resolve(e)
-        const inner = await next(e)
-        if (st.hidden) {
-          return <Box key="skin" display="none">{inner}</Box>
-        }
-        if (!st.badge) {
-          return <Box key="skin" {...f}>{inner}</Box>
-        }
-        return (
-          <Box key="skin" {...f} flexDirection="row" columnGap={1}>
-            <Text key="badge" color={st.badgeColor ?? st.border ?? 'claude'} bold>{st.badge}</Text>
-            <Box key="in" flexDirection="column" flexGrow={1} flexShrink={1}>{inner}</Box>
-          </Box>
-        )
-    },
+    { component: ['UserMessage', 'AssistantMessage', 'ToolUse', 'ToolResult', 'ToolGroup', 'ToolProgress', 'Spinner', 'InfoNotice', 'TurnDuration', 'CommandOutput', 'AskUserQuestion', 'PromptHint'] },
+    async ($, e, next) => dress($, e, next(e)),
   )
 
   // Footer: `fleet 3 · 1 needs you`, only when there is more than this session.
@@ -910,12 +914,12 @@ export const register: Register = (on, options) => {
     const rs = await read($, fleet)
     const sk = await read($, skinAtom)
     if (rs.length < 2) {
-      return sk.name ? next({ ...e, props: { ...e.props, modes: [...e.props.modes, `✻ ${sk.name}`] } }) : next(e)
+      return dress($, e, sk.name ? next({ ...e, props: { ...e.props, modes: [...e.props.modes, `✻ ${sk.name}`] } }) : next(e))
     }
     const id = await read($, me)
     const need = rs.filter(r => r.id !== id && r.rank >= NEEDS_YOU).length
     const label = need ? `fleet ${rs.length} · ${need} need${need === 1 ? 's' : ''} you` : `fleet ${rs.length}`
-    return next({ ...e, props: { ...e.props, modes: [...e.props.modes, label] } })
+    return dress($, e, next({ ...e, props: { ...e.props, modes: [...e.props.modes, label] } }))
   })
 
   // Above the prompt: the one other session that most needs you, until dismissed.
