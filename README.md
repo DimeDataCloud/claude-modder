@@ -2,6 +2,8 @@
 
 # claude-modder
 
+> Unofficial community project. Not affiliated with, endorsed by or sponsored by Anthropic. "Claude" and "Claude Code" are trademarks of Anthropic, PBC.
+
 A Claude Code mod that turns every session you have open into one mind. It **watches** them all and tells you which one needs you. It **learns** from how each call it judged actually ended. And it **wears** whatever you tell it to: say *"make tool calls teal and give them a ⚡ badge"* and the workspace changes as you watch.
 
 Plain function hooks, with no daemon, server or build step. It runs in the terminal and in the desktop app's Code tab.
