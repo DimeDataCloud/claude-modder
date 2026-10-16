@@ -4,7 +4,7 @@
 
 > Unofficial community project. Not affiliated with, endorsed by or sponsored by Anthropic. "Claude" and "Claude Code" are trademarks of Anthropic, PBC.
 
-A Claude Code mod that turns every session you have open into one mind. It **watches** them all and tells you which one needs you. It **learns** from how each call it judged actually ended. And it **wears** whatever you tell it to: say *"make tool calls teal and give them a ⚡ badge"* and the workspace changes as you watch.
+A Claude Code mod that turns every session you have open into one mind. It **watches** them all and tells you which one needs you. It **learns** from how each call it judged actually ended. And it **wears** whatever you tell it to: say *"make tool calls teal and give them a "BOLT" badge"* and the workspace changes as you watch.
 
 Plain function hooks, with no daemon, server or build step. It runs in the terminal and in the desktop app's Code tab.
 
@@ -14,17 +14,17 @@ Plain function hooks, with no daemon, server or build step. It runs in the termi
 
 | | What it does | Try |
 |---|---|---|
-| **✻ Skin** | Natural-language workspace editing. Colours, borders, fills and overlay badges on every part Claude Code draws, plus the engine's own colour tokens. | `/skin sunset` · `/skin warmer` · `/skin overlay 🔒 on tool calls` |
-| **✻ Mind** | A permission gate that refits its own thresholds to your approve/deny clicks, under the rule that it may never get a known outcome wrong. | `/modder mind` |
-| **✻ Fleet** | One orchestrator over every open session. It ranks who needs you and drops a nudge into the right prompt box. | `/modder` |
-| **✻ Hands** | Claude gets two tools of its own: `skin` changes how its workspace looks, and `mind` tells it what its other sessions are doing. | *"Claude, make this look like a rainy Tokyo night"* |
+| **Skin** | Natural-language workspace editing. Colours, borders, fills and overlay badges on every part Claude Code draws, plus the engine's own colour tokens. | `/skin sunset` · `/skin warmer` · `/skin overlay "LOCK" on tool calls` |
+| **Mind** | A permission gate that refits its own thresholds to your approve/deny clicks, under the rule that it may never get a known outcome wrong. | `/modder mind` |
+| **Fleet** | One orchestrator over every open session. It ranks who needs you and drops a nudge into the right prompt box. | `/modder` |
+| **Hands** | Claude gets two tools of its own: `skin` changes how its workspace looks, and `mind` tells it what its other sessions are doing. | *"Claude, make this look like a rainy Tokyo night"* |
 
 ---
 
-## ✻ Skin: say what you want it to look like
+## Skin: say what you want it to look like
 
 ```
-/skin make tool calls teal and give them a ⚡ badge
+/skin make tool calls teal and give them a "BOLT" badge
 /skin double rounded purple borders on claude's replies
 /skin background of my messages dark navy
 /skin make the prompt box claude orange
@@ -61,7 +61,7 @@ The **Skin** tab (`/skin` with no words) draws every part as a live swatch, show
 - Only the spinner and notices can be hidden. A question or a message is never hidden, because that would hide what needs you.
 - The theme setting itself is changed only through `/config`'s own rules. When Claude Code reserves it for its dialog, the mod says so and leaves your settings alone.
 
-## ✻ Mind: a gate that learns from you, and can't learn to be careless
+## Mind: a gate that learns from you, and can't learn to be careless
 
 Every tool call that does more than read is put to [Jev](https://docs.typesafe.ai) as eight yes/no questions: does it serve the request, and is it one of seven risks (destroys, leaks, secrets, outward, scope, system, steered).
 
@@ -87,7 +87,7 @@ The **Mind** tab shows:
 - a sparkline of agreement with outcomes over time;
 - how the skin understood you: by code, from memory, or by Claude.
 
-## ✻ Fleet: who needs you
+## Fleet: who needs you
 
 ```
 ✻ modder  Sessions  Skin  Mind
@@ -117,7 +117,7 @@ You see the result in:
 
 **Nudge** puts a note into the other session's prompt box. A person presses Enter; nothing is ever submitted for you.
 
-## ✻ Hands: Claude can see and change its own workspace
+## Hands: Claude can see and change its own workspace
 
 The mod registers two tools the model can call:
 
@@ -141,16 +141,18 @@ Every claim above is tested. `claude plugin test .` runs **45 tests**:
 | Mutation testing | Ten deliberate bugs in the safety-critical and coverage lines; every one turns the suite red |
 
 **Live, 2026-10-09**, in a real `claude -p` with the mod loaded:
-- Claude called its own `skin` tool to wear *sunset* with a ✻ badge on its replies.
+- Claude called its own `skin` tool to wear *sunset* with a badge on its replies.
 - `/skin make it feel like a rainy tokyo night` went to Claude once and came back as a validated neon-on-navy look.
 - Saying it again was answered from memory: the store read `claude: 1, memory: 1`.
-- Jev: 180–340 ms and about $0.00003–0.00004 per call (2026-10-08).
+- Jev: 180 to 340 ms and about $0.00003 to $0.00004 per call (2026-10-08).
 
 ## Install and set up
 
 ```
 /plugin install modder --marketplace DimeDataCloud/claude-modder
 ```
+
+Requirements: Claude Code with plugin support. An OpenRouter key is optional and only needed for Jev and for the phrases the parser cannot read.
 
 Jev answers through OpenRouter (`typesafe/jev-1.13`, pinned). Set `OPENROUTER_API_KEY`, or point the **OpenRouter key file** option at a file holding the key. The key is read at runtime and never written, logged or shown. Without a key, everything but Jev's reads still works, the skin included.
 
@@ -196,6 +198,10 @@ claude --plugin-dir .
 | [`hooks/learn.ts`](hooks/learn.ts) | Outcomes, calibration, the learning curve |
 | [`hooks/policy.ts`](hooks/policy.ts) | Hard rules, gate and attention policy |
 | [`hooks/fleet.ts`](hooks/fleet.ts) · [`hooks/jev.ts`](hooks/jev.ts) | Session cards; the Jev client and queue |
+
+## Contributing
+
+This is a community project by Christian Dixon. Bug reports and suggestions are welcome as GitHub issues. Before opening a pull request, run `claude plugin test .` and keep the safety tests green.
 
 ## Prior art
 
